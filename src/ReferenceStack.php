@@ -85,6 +85,18 @@ class ReferenceStack {
 	}
 
 	/**
+	 * Get a ref that is identified by its group and key
+	 *
+	 * @param string $group
+	 * @param string|int $key
+	 *
+	 * @return ReferenceStackItem The ref with given $group and $key.
+	 */
+	public function getRef(string $group, string|int $key): ?ReferenceStackItem {
+		return $this->refs[$group][$key] ?? null;
+	}
+
+	/**
 	 * Set the text for a ref that is identified by its group and key
 	 *
 	 * @param ?string $text Content from the <ref> tag
@@ -220,4 +232,5 @@ class ReferenceStack {
 		$this->refs[$group][$grKey]->warnings = array_merge($this->refs[$group][$grKey]->warnings, $warnings);
 		return null;
 	}
+
 }

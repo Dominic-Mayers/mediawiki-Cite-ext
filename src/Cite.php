@@ -153,16 +153,21 @@ class Cite {
 		}
 		unset($nm);
 
+		$inList = ($this->inReferencesGroup !== null && $this->depthRef == 0);
+		$grKey = $this->referenceStack->register($arguments['group'], $arguments['name'], $inList);
+		$validator = new Validator($parser->getStripState(), $this->referenceStack, $this->inReferencesGroup);
+		$validator->validateNewRef($text, $arguments['group'], $arguments['name'], $grKey);
+		if ($inList) {
+			$validator->validateNewRefInList($text, $arguments['group'], $arguments['name'], $grKey);
+		}
+
 		// Validation cares about the difference between null and empty, but from here on we don't
 		if ($text !== null && trim($text) === '') {
 			$text = null;
 		}
 
-		$inList = ($this->inReferencesGroup !== null && $this->depthRef == 0);
-		$grKey = $this->referenceStack->register($arguments['group'], $arguments['name'], $inList);
-
-		// This is not only a shortcut : a value null is not accepted when a string is expected.
 		$processed_text = $text;
+		// This is not only a shortcut : a value null is not accepted when a string is expected.
 		if ($text !== null) {
 			$this->depthRef++;
 			$processed_text = $parser->recursiveTagParse($text, $frame);
@@ -173,7 +178,7 @@ class Cite {
 		if ($processed_text !== null && trim($processed_text) === '') {
 			$processed_text = null;
 		}
-
+		$validator->validateNewHalfParsedHtml($processed_text, $inList, $arguments['group'], $grKey);
 		$ref = $this->referenceStack->setHalfParsedHtml($processed_text, $arguments['group'], $grKey);
 		if (isset($arguments['dir'])) {
 			$ref = $this->referenceStack->setDir($arguments['dir'], $arguments['group'], $grKey);
@@ -242,6 +247,10 @@ class Cite {
 
 		$this->parseReferencesTagContent($parser, $text, $frame);
 
+		// Now that all the ref tags for the group have been processed as ref items, we validate them.
+		// The warnings will be displayed later when the references (the items) will be formatted.
+		$validator = new Validator($parser->getStripState(), $this->referenceStack, $this->inReferencesGroup);
+		$validator->validateGroupReferences($this->inReferencesGroup);
 		$responsive = $arguments['responsive'];
 		$ret = $this->formatReferences($parser, $this->inReferencesGroup, $responsive);
 		$this->inReferencesGroup = null;
@@ -316,6 +325,10 @@ class Cite {
 	 */
 	public function checkRefsNoReferences(Parser $parser, bool $isSectionPreview): string {
 		global $wgCiteResponsiveReferences;
+		if (!$isSectionPreview) {
+			$validator = new Validator($parser->getStripState(), $this->referenceStack, $this->inReferencesGroup);
+			$validator->validateRemainingRef();
+		}
 		$groups = $this->referenceStack->getGroups();
 		$s = '';
 		foreach ($groups as $group) {

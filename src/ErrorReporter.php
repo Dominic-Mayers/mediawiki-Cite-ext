@@ -35,6 +35,19 @@ class ErrorReporter {
 	 * @param string $key Message name of the error or warning
 	 * @param mixed ...$params
 	 *
+	 * @return string Fully-parsed wikitext with extension's tags already being expanded
+	 */
+	public function fullyParsed(Parser $parser, string $key, ...$params): string {
+		$msg = $this->msg($parser, $key, ...$params);
+		$fullyParsed = $parser->recursiveTagParseFully($msg->plain());
+		return $this->wrapInHtmlContainer($fullyParsed, $key, $msg->getLanguage());
+	}
+
+	/**
+	 * @param Parser $parser
+	 * @param string $key Message name of the error or warning
+	 * @param mixed ...$params
+	 *
 	 * @return string Half-parsed wikitext with extension's tags already being expanded
 	 */
 	public function halfParsed( Parser $parser, string $key, ...$params ): string {

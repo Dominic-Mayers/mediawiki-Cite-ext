@@ -132,6 +132,12 @@ class ReferencesFormatter {
 	private function formatListItem(
 		Parser $parser, $grKey, ReferenceStackItem $ref, bool $isSectionPreview
 	): string {
+		$warnings = '';
+		foreach ($ref->warnings as $warning) {
+			$halfParsedHtmlWarning = $this->errorReporter->halfParsed($parser, $warning['message'], ...$warning['params']);
+			$warnings .= "<br>" . $halfParsedHtmlWarning;
+		}
+		$warnings = substr($warnings, 4);
 		$text = $this->referenceText($parser, $grKey, $ref, $isSectionPreview);
 		// Empty item with no warning are only possible in preview and we display nothing in this case.
 		if (!$warnings && !$text) {
@@ -210,22 +216,15 @@ class ReferencesFormatter {
 	 * @return string
 	 */
 	private function referenceText(
-		Parser $parser, $grKey, ReferenceStackItem $ref, bool $isSectionPreview
-	): string {
-		$text = $ref->text ?? null;
-		if ($text === null) {
-			return $this->errorReporter->plain($parser,
-					$isSectionPreview ? 'cite_warning_sectionpreview_no_text' : 'cite_error_references_no_text', $grKey);
+		Parser $parser, $key, ReferenceStackItem $ref, bool $isSectionPreview
+	): ?string {
+		if ($ref->name == ":4") {
+			$a = null;
 		}
-
-		foreach ($ref->warnings as $warning) {
-			// @phan-suppress-next-line PhanParamTooFewUnpack
-			$text .= ' ' . $this->errorReporter->plain($parser, ...$warning);
-			// FIXME: We could use a StatusValue object to get rid of duplicates
-			break;
-		}
-
-		return '<span class="reference-text">' . rtrim($text, "\n") . "</span>\n";
+		if ($ref->text)
+			return '<span class="reference-text">' . rtrim($ref->text, "\n") . "</span>\n";
+		else
+			return null;
 	}
 
 	/**

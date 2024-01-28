@@ -4,6 +4,7 @@ namespace Cite;
 
 use MediaWiki\Parser\Sanitizer;
 use StatusValue;
+use StripState;
 
 /**
  * Context-aware, detailed validation of the arguments and content of a <ref> tag.
@@ -12,160 +13,155 @@ use StatusValue;
  */
 class Validator {
 
+	// This class seems to not use optimally status objects. The idea is to create a status object and
+	// cumulate information into it and return it at the end.
+	private StripState $stripState;
 	private ReferenceStack $referenceStack;
 	private ?string $inReferencesGroup;
-	private bool $isSectionPreview;
-	private bool $isExtendsEnabled;
 
 	/**
-	 * @param ReferenceStack $referenceStack
 	 * @param string|null $inReferencesGroup Group name of the <references> context to consider
-	 *  during validation. Null if we are currently not in a <references> context.
-	 * @param bool $isSectionPreview Validation is relaxed when previewing parts of a page
-	 * @param bool $isExtendsEnabled Temporary feature flag
 	 */
-	public function __construct(
-		ReferenceStack $referenceStack,
-		?string $inReferencesGroup = null,
-		bool $isSectionPreview = false,
-		bool $isExtendsEnabled = false
-	) {
+	public function __construct($stripState, $referenceStack, $inReferencesGroup = null) {
+		$this->stripState = $stripState;
 		$this->referenceStack = $referenceStack;
 		$this->inReferencesGroup = $inReferencesGroup;
-		$this->isSectionPreview = $isSectionPreview;
-		$this->isExtendsEnabled = $isExtendsEnabled;
 	}
 
-	public function validateRef(
-		?string $text,
-		string $group,
-		?string $name,
-		?string $extends,
-		?string $follow,
-		?string $dir
-	): StatusValue {
-		if ( ctype_digit( (string)$name )
-			|| ctype_digit( (string)$extends )
-			|| ctype_digit( (string)$follow )
-		) {
+	public function validateNewRef(?string $text, string $group, ?string $name, string|int $grKey) {
+		// Not sure thar it is optimal to return the status as soon  as we have an error.
+		// The idea is perhaps to cumulate the errors in the status and return it at the end.
+		if (ctype_digit((string) $name)) {
 			// Numeric names mess up the resulting id's, potentially producing
 			// duplicate id's in the XHTML.  The Right Thing To Do
 			// would be to mangle them, but it's not really high-priority
 			// (and would produce weird id's anyway).
-			return StatusValue::newFatal( 'cite_error_ref_numeric_key' );
+			$status = StatusValue::newFatal('cite_error_ref_numeric_key');
+			$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
 		}
 
-		if ( $extends ) {
-			// Temporary feature flag until mainstreamed, see T236255
-			if ( !$this->isExtendsEnabled ) {
-				return StatusValue::newFatal( 'cite_error_ref_too_many_keys' );
+		if ($text !== null) {
+			$partiallyUntaggedText = preg_replace('#<(\w++)[^>]*+>.*?</\1\s*>|<!--.*?-->#s', '', $text);
+			$unTaggedText = preg_replace('#<ref(erences)?\b[^>]*/>#s', '', $partiallyUntaggedText);
+			if (preg_match('/<ref(erences)?\b[^>]*+>/i', $unTaggedText)) {
+				// (bug T8199) This most likely implies that someone left off the
+				// closing </ref> tag, which will cause the entire article to be
+				// eaten up until the next closing </ref>.  So we bail out early instead.
+				// The fancy regex above first tries chopping out anything that
+				// looks like a comment or SGML tag, which is a crude way to avoid
+				// false alarms for <nowiki>, <pre>, etc.
+				//
+				// Possible improvement: print the warning, followed by the contents
+				// of the <ref> tag.  This way no part of the article will be eaten
+				// even temporarily.
+				//
+				// This cannot be managed as the other warnings, because it is hard to
+				// predict the behaviour of the parser.
+				$status = StatusValue::newFatal('cite_error_included_ref');
+				$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
 			}
-
-			$groupRefs = $this->referenceStack->getGroupRefs( $group );
-			// @phan-suppress-next-line PhanTypeMismatchDimFetchNullable false positive
-			if ( isset( $groupRefs[$name] ) && !isset( $groupRefs[$name]->extends ) ) {
-				// T242141: A top-level <ref> can't be changed into a sub-reference
-				return StatusValue::newFatal( 'cite_error_references_duplicate_key', $name );
-			} elseif ( isset( $groupRefs[$extends]->extends ) ) {
-				// A sub-reference can not be extended a second time (no nesting)
-				return StatusValue::newFatal( 'cite_error_ref_nested_extends', $extends,
-					$groupRefs[$extends]->extends );
-			}
 		}
-
-		if ( $follow && ( $name || $extends ) ) {
-			return StatusValue::newFatal( 'cite_error_ref_follow_conflicts' );
-		}
-
-		if ( $dir !== null && $dir !== 'rtl' && $dir !== 'ltr' ) {
-			return StatusValue::newFatal( 'cite_error_ref_invalid_dir', $dir );
-		}
-
-		return $this->inReferencesGroup === null ?
-			$this->validateRefOutsideOfReferences( $text, $name ) :
-			$this->validateRefInReferences( $text, $group, $name );
 	}
 
-	private function validateRefOutsideOfReferences(
-		?string $text,
-		?string $name
-	): StatusValue {
-		if ( !$name ) {
-			if ( $text === null ) {
-				// Completely empty ref like <ref /> is forbidden.
-				return StatusValue::newFatal( 'cite_error_ref_no_key' );
-			} elseif ( trim( $text ) === '' ) {
-				// Must have content or reuse another ref by name.
-				return StatusValue::newFatal( 'cite_error_ref_no_input' );
-			}
-		}
-
-		if ( $text !== null && preg_match(
-				'/<ref(erences)?\b[^>]*+>/i',
-				preg_replace( '#<(\w++)[^>]*+>.*?</\1\s*>|<!--.*?-->#s', '', $text )
-			) ) {
-			// (bug T8199) This most likely implies that someone left off the
-			// closing </ref> tag, which will cause the entire article to be
-			// eaten up until the next <ref>.  So we bail out early instead.
-			// The fancy regex above first tries chopping out anything that
-			// looks like a comment or SGML tag, which is a crude way to avoid
-			// false alarms for <nowiki>, <pre>, etc.
-			//
-			// Possible improvement: print the warning, followed by the contents
-			// of the <ref> tag.  This way no part of the article will be eaten
-			// even temporarily.
-			return StatusValue::newFatal( 'cite_error_included_ref' );
-		}
-
-		return StatusValue::newGood();
-	}
-
-	private function validateRefInReferences(
-		?string $text,
-		string $group,
-		?string $name
-	): StatusValue {
-		if ( $group !== $this->inReferencesGroup ) {
-			// <ref> and <references> have conflicting group attributes.
-			return StatusValue::newFatal( 'cite_error_references_group_mismatch',
-				Sanitizer::safeEncodeAttribute( $group ) );
-		}
-
-		if ( !$name ) {
+	public function validateNewRefInList(?string $text, string $group, ?string $name, string|int $grKey) {
+		// Not sure thar it is optimal to return the status as soon  as we have an error.
+		// The idea is perhaps to cumulate the errors in the status and return it at the end.
+		if ($name === null) {
 			// <ref> calls inside <references> must be named
-			return StatusValue::newFatal( 'cite_error_references_no_key' );
+			$status = StatusValue::newFatal('cite_error_references_no_key');
+			$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
 		}
 
-		if ( $text === null || trim( $text ) === '' ) {
-			// <ref> called in <references> has no content.
-			return StatusValue::newFatal(
-				'cite_error_empty_references_define',
-				Sanitizer::safeEncodeAttribute( $name ),
-				Sanitizer::safeEncodeAttribute( $group )
+		if ($group !== $this->inReferencesGroup) {
+			// <ref> and <references> have conflicting group attributes.
+			$status = StatusValue::newFatal(
+					'cite_error_references_group_mismatch',
+					Sanitizer::safeEncodeAttribute($group)
 			);
+			$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
 		}
-
-		// Section previews are exempt from some rules.
-		if ( !$this->isSectionPreview ) {
-			if ( !$this->referenceStack->hasGroup( $group ) ) {
-				// Called with group attribute not defined in text.
-				return StatusValue::newFatal(
-					'cite_error_references_missing_group',
-					Sanitizer::safeEncodeAttribute( $group ),
-					Sanitizer::safeEncodeAttribute( $name )
-				);
-			}
-
-			$groupRefs = $this->referenceStack->getGroupRefs( $group );
-
-			if ( !isset( $groupRefs[$name] ) ) {
-				// No such named ref exists in this group.
-				return StatusValue::newFatal( 'cite_error_references_missing_key',
-					Sanitizer::safeEncodeAttribute( $name ) );
-			}
-		}
-
-		return StatusValue::newGood();
 	}
 
+	public function validateNewHalfParsedHtml(?string $halfParsedHtml, bool $inList, string $group, string|int $grKey) {
+		// Not sure thar it is optimal to return the status as soon  as we have an error.
+		// The idea is perhaps to cumulate the errors in the status and return it at the end.
+		if ($inList && ( $halfParsedHtml === null || trim($halfParsedHtml) === '' )) {
+			// <ref> called in <references> has no content.
+			$status = StatusValue::newFatal(
+					'cite_error_empty_references_define',
+					Sanitizer::safeEncodeAttribute($grKey),
+					Sanitizer::safeEncodeAttribute($group)
+			);
+			$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+		}
+
+		$storedHalfParsedHtml = $this->referenceStack->getRef($group, $grKey)->text;
+		if (isset($storedHalfParsedHtml) && isset($halfParsedHtml) &&
+			$this->stripState->unstripBoth($halfParsedHtml) !== $this->stripState->unstripBoth($storedHalfParsedHtml)) {
+			$status = StatusValue::newFatal(
+					'cite_error_references_duplicate_key',
+					Sanitizer::safeEncodeAttribute($grKey)
+			);
+			$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+		}
+	}
+
+	// Only to be executed after all other ref tags for the group have been processed.
+	// Otherwise, the count property for the item might not be the final value.
+	public function validateGroupReferences(string $group) {
+		// Not sure, eventually, if there is more things checked, that it would be optimal to return
+		// the status as soon  as we have an error. The idea is perhaps to cumulate the errors
+		// in the status and return it at the end.
+
+		$refsGroup = $this->referenceStack->getGroupRefs($this->inReferencesGroup);
+		foreach ($refsGroup as $grKey => $ref) {
+			if ($ref->count === 0) {
+				$status = StatusValue::newFatal(
+						'cite_error_references_missing_key',
+						Sanitizer::safeEncodeAttribute($grKey),
+						Sanitizer::safeEncodeAttribute($group)
+				);
+				$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+			}
+
+			if ($ref->text === null || trim($ref->text) === '') {
+				$status = StatusValue::newFatal(
+						'cite_error_references_no_text',
+					Sanitizer::safeEncodeAttribute($grKey)
+				);
+				$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+			}
+
+			if (isset($ref->extends)) {
+				$parent = $this->referenceStack->getRef($group, $ref->extends);
+				if (isset($parent->extends)) {
+					$status = StatusValue::newFatal(
+							'cite_error_ref_nested_extends',
+							$extends,
+							$parent->extends
+					);
+					$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+				}
+			}
+		}
+	}
+
+	/**	 *
+	 * @param Parser $parser
+	 * @param bool $isSectionPreview
+	 *
+	 * @return string HTML
+	 */
+	public function validateRemainingRef() {
+		foreach ($this->referenceStack->getGroups() as $group) {
+			foreach ($this->referenceStack->getGroupRefs($group) as $grKey => $ref) {
+				$status = StatusValue::newFatal(
+					'cite_error_group_refs_without_references',
+					Sanitizer::safeEncodeAttribute($group),
+					Sanitizer::safeEncodeAttribute($grKey)
+				);
+				$this->referenceStack->setWarnings($group, $grKey, $status->getErrors());
+			}
+		}
+	}
 }
