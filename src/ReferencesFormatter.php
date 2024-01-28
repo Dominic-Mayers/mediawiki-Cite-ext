@@ -49,23 +49,25 @@ class ReferencesFormatter {
 		bool $responsive,
 		bool $isSectionPreview
 	): string {
-		if ( !$groupRefs ) {
+		if (!$groupRefs) {
 			return '';
 		}
 
-		$wikitext = $this->formatRefsList( $parser, $groupRefs, $isSectionPreview );
+		$wikitext = $this->formatRefsList($parser, $groupRefs, $isSectionPreview);
 
 		// Live hack: parse() adds two newlines on WM, can't reproduce it locally -ævar
-		$html = rtrim( $parser->recursiveTagParse( $wikitext ), "\n" );
+		// $parser->recursiveTagParse( $wikitext );
+		$html = $wikitext;
 
-		if ( $responsive ) {
-			$wrapClasses = [ 'mw-references-wrap' ];
-			if ( count( $groupRefs ) > 10 ) {
+		if ($responsive) {
+			$wrapClasses = ['mw-references-wrap'];
+			if (count($groupRefs) > 10) {
 				$wrapClasses[] = 'mw-references-columns';
 			}
 			// Use a DIV wrap because column-count on a list directly is broken in Chrome.
 			// See https://bugs.chromium.org/p/chromium/issues/detail?id=498730.
-			return Html::rawElement( 'div', [ 'class' => $wrapClasses ], $html );
+			// To avoid display an empty reference section in preview, Empty $html is not wrapped.
+			return $html ? Html::rawElement('div', ['class' => $wrapClasses], $html) : "";
 		}
 
 		return $html;
@@ -83,45 +85,27 @@ class ReferencesFormatter {
 		array $groupRefs,
 		bool $isSectionPreview
 	): string {
-		// After sorting the list, we can assume that references are in the same order as their
-		// numbering.  Subreferences will come immediately after their parent.
-		uasort(
-			$groupRefs,
-			static function ( ReferenceStackItem $a, ReferenceStackItem $b ): int {
-				$cmp = ( $a->number ?? 0 ) - ( $b->number ?? 0 );
-				return $cmp ?: ( $a->extendsIndex ?? 0 ) - ( $b->extendsIndex ?? 0 );
-			}
-		);
-
 		// Add new lines between the list items (ref entries) to avoid confusing tidy (T15073).
 		// Note: This builds a string of wikitext, not html.
 		$parserInput = "\n";
-		/** @var string|bool $indented */
-		$indented = false;
-		foreach ( $groupRefs as $key => &$ref ) {
-			// Make sure the parent is not a subreference.
-			// FIXME: Move to a validation function.
-			$extends =& $ref->extends;
-			if ( isset( $extends ) && isset( $groupRefs[$extends]->extends ) ) {
-				$ref->warnings[] = [ 'cite_error_ref_nested_extends',
-					$extends, $groupRefs[$extends]->extends ];
-			}
-
-			if ( !$indented && isset( $extends ) ) {
+		foreach ($groupRefs as $grKey => &$ref) {
+			$extends = & $ref->extends;
+			if (!$indented && isset($extends)) {
 				// The nested <ol> must be inside the parent's <li>
-				if ( preg_match( '#</li>\s*$#D', $parserInput, $matches, PREG_OFFSET_CAPTURE ) ) {
-					$parserInput = substr( $parserInput, 0, $matches[0][1] );
+				if (preg_match('#</li>\s*$#D', $parserInput, $matches, PREG_OFFSET_CAPTURE)) {
+					$parserInput = substr($parserInput, 0, $matches[0][1]);
 				}
-				$parserInput .= Html::openElement( 'ol', [ 'class' => 'mw-extended-references' ] );
+				$parserInput .= Html::openElement('ol', ['class' => 'mw-extended-references']);
 				$indented = $matches[0][0] ?? true;
-			} elseif ( $indented && !isset( $extends ) ) {
-				$parserInput .= $this->closeIndention( $indented );
+			} elseif ($indented && !isset($extends)) {
+				$parserInput .= $this->closeIndention($indented);
 				$indented = false;
 			}
-			$parserInput .= $this->formatListItem( $parser, $key, $ref, $isSectionPreview ) . "\n";
+			$fomattedItem = $this->formatListItem($parser, $grKey, $ref, $isSectionPreview);
+			$parserInput .= $fomattedItem ? $fomattedItem . "\n" : "";
 		}
-		$parserInput .= $this->closeIndention( $indented );
-		return Html::rawElement( 'ol', [ 'class' => 'references' ], $parserInput );
+		// In preview, to avoid displaying the reference section empty parserInput must not be wrapped.
+		return $parserInput === "\n" ? '' : Html::rawElement('ol', ['class' => 'references'], $parserInput);
 	}
 
 	/**
@@ -129,12 +113,12 @@ class ReferencesFormatter {
 	 *
 	 * @return string
 	 */
-	private function closeIndention( $closingLi ): string {
-		if ( !$closingLi ) {
+	private function closeIndention($closingLi): string {
+		if (!$closingLi) {
 			return '';
 		}
 
-		return Html::closeElement( 'ol' ) . ( is_string( $closingLi ) ? $closingLi : '' );
+		return Html::closeElement('ol') . ( is_string($closingLi) ? $closingLi : '' );
 	}
 
 	/**
@@ -146,67 +130,75 @@ class ReferencesFormatter {
 	 * @return string Wikitext, wrapped in a single <li> element
 	 */
 	private function formatListItem(
-		Parser $parser, $key, ReferenceStackItem $ref, bool $isSectionPreview
+		Parser $parser, $grKey, ReferenceStackItem $ref, bool $isSectionPreview
 	): string {
-		$text = $this->referenceText( $parser, $key, $ref, $isSectionPreview );
-		$error = '';
+		$text = $this->referenceText($parser, $grKey, $ref, $isSectionPreview);
+		// Empty item with no warning are only possible in preview and we display nothing in this case.
+		if (!$warnings && !$text) {
+			return '';
+		}
+		$text = $text ? "$text<br>$warnings" : $warnings;
 		$extraAttributes = '';
 
-		if ( isset( $ref->dir ) ) {
+		// Todo: Check that the followings are OK with the new code.
+		if (isset($ref->dir)) {
 			// The following classes are generated here:
 			// * mw-cite-dir-ltr
 			// * mw-cite-dir-rtl
-			$extraAttributes = Html::expandAttributes( [ 'class' => 'mw-cite-dir-' . $ref->dir ] );
+			$extraAttributes = Html::expandAttributes(['class' => 'mw-cite-dir-' . $ref->dir]);
 		}
 
 		// Special case for an incomplete follow="…". This is valid e.g. in the Page:… namespace on
 		// Wikisource. Note this returns a <p>, not an <li> as expected!
-		if ( isset( $ref->follow ) ) {
-			return '<p id="' . $this->anchorFormatter->jumpLinkTarget( $ref->follow ) . '">' . $text . '</p>';
+		if (isset($ref->follow)) {
+			return '<p id="' . $this->anchorFormatter->jumpLinkTarget($ref->follow) . '">' . $text . '</p>';
 		}
 
-		if ( $ref->count === 1 ) {
-			if ( !isset( $ref->name ) ) {
+		if ($ref->count === 1) {
+			if (!isset($ref->name)) {
 				$id = $ref->key;
-				$backlinkId = $this->anchorFormatter->backLink( $ref->key );
+				$backlinkId = $this->anchorFormatter->backLink($ref->key);
 			} else {
-				$id = $key . '-' . $ref->key;
+				$id = $ref->name . '-' . $ref->key;
 				// TODO: Use count without decrementing.
-				$backlinkId = $this->anchorFormatter->backLink( $key, $ref->key . '-' . ( $ref->count - 1 ) );
+				$backlinkId = $this->anchorFormatter->backLink($ref->name, $ref->key . '-' . ( $ref->count - 1 ));
 			}
-			return $this->messageLocalizer->msg(
-				'cite_references_link_one',
-				$this->anchorFormatter->jumpLinkTarget( $id ),
-				$backlinkId,
-				$text . $error,
-				$extraAttributes
-			)->plain();
+			// recursiveTagParse() is needed, but it should only be applied to the wikitext, not $text,
+			// which is half-parsed html.
+			$s = bin2hex(openssl_random_pseudo_bytes(10));
+			return str_replace("---Marker-$s-for-text-in-ReferencesFormatter::formatListItem---", $text, $parser->recursiveTagParse($this->messageLocalizer->msg(
+						'cite_references_link_one',
+						$this->anchorFormatter->jumpLinkTarget($id),
+						$backlinkId,
+						"---Marker-$s-for-text-in-ReferencesFormatter::formatListItem---",
+						$extraAttributes
+					)->plain()));
 		}
 
 		// Named references with >1 occurrences
 		$backlinks = [];
-		for ( $i = 0; $i < $ref->count; $i++ ) {
-			$backlinks[] = $this->messageLocalizer->msg(
-				'cite_references_link_many_format',
-				$this->anchorFormatter->backLink( $key, $ref->key . '-' . $i ),
-				$this->referencesFormatEntryNumericBacklinkLabel(
-					$ref->number .
-						( isset( $ref->extendsIndex ) ? '.' . $ref->extendsIndex : '' ),
-					$i,
-					$ref->count
-				),
-				$this->referencesFormatEntryAlternateBacklinkLabel( $parser, $i )
-			)->plain();
+		for ($i = 0; $i < $ref->count; $i++) {
+			// recursiveTagParse() is needed, because it is not executed on the entire ref item.
+			$backlinks[] = $parser->recursiveTagParse($this->messageLocalizer->msg(
+					'cite_references_link_many_format',
+					$this->anchorFormatter->backLink($grKey, $ref->key . '-' . $i),
+					$this->referencesFormatEntryNumericBacklinkLabel(
+						$ref->number,
+						$i,
+						$ref->count
+					),
+					$this->referencesFormatEntryAlternateBacklinkLabel($parser, $i)
+				)->plain());
 		}
 		$linkTargetId = $ref->count > 0 ?
-			$this->anchorFormatter->jumpLinkTarget( $key . '-' . $ref->key ) : '';
+			$this->anchorFormatter->jumpLinkTarget($grKey . '-' . $ref->key) : 'Missing ref in prior text';
 		return $this->messageLocalizer->msg(
-			'cite_references_link_many',
-			$linkTargetId,
-			$this->listToText( $backlinks ),
-			$text . $error,
-			$extraAttributes
-		)->plain();
+				'cite_references_link_many',
+				$linkTargetId,
+				$this->listToText($backlinks),
+				$text,
+				$extraAttributes
+			)->plain();
 	}
 
 	/**
@@ -218,24 +210,22 @@ class ReferencesFormatter {
 	 * @return string
 	 */
 	private function referenceText(
-		Parser $parser, $key, ReferenceStackItem $ref, bool $isSectionPreview
+		Parser $parser, $grKey, ReferenceStackItem $ref, bool $isSectionPreview
 	): string {
 		$text = $ref->text ?? null;
-		if ( $text === null ) {
-			return $this->errorReporter->plain( $parser,
-				$isSectionPreview
-					? 'cite_warning_sectionpreview_no_text'
-					: 'cite_error_references_no_text', $key );
+		if ($text === null) {
+			return $this->errorReporter->plain($parser,
+					$isSectionPreview ? 'cite_warning_sectionpreview_no_text' : 'cite_error_references_no_text', $grKey);
 		}
 
-		foreach ( $ref->warnings as $warning ) {
+		foreach ($ref->warnings as $warning) {
 			// @phan-suppress-next-line PhanParamTooFewUnpack
-			$text .= ' ' . $this->errorReporter->plain( $parser, ...$warning );
+			$text .= ' ' . $this->errorReporter->plain($parser, ...$warning);
 			// FIXME: We could use a StatusValue object to get rid of duplicates
 			break;
 		}
 
-		return '<span class="reference-text">' . rtrim( $text, "\n" ) . "</span>\n";
+		return '<span class="reference-text">' . rtrim($text, "\n") . "</span>\n";
 	}
 
 	/**
@@ -254,11 +244,11 @@ class ReferencesFormatter {
 		int $offset,
 		int $max
 	): string {
-		return $this->messageLocalizer->localizeDigits( $base ) .
-			$this->messageLocalizer->localizeSeparators( '.' ) .
+		return $this->messageLocalizer->localizeDigits($base) .
+			$this->messageLocalizer->localizeSeparators('.') .
 			$this->messageLocalizer->localizeDigits(
-				str_pad( (string)$offset, strlen( (string)$max ), '0', STR_PAD_LEFT )
-			);
+				str_pad((string) $offset, strlen((string) $max), '0', STR_PAD_LEFT)
+		);
 	}
 
 	/**
@@ -272,12 +262,11 @@ class ReferencesFormatter {
 	): string {
 		$this->backlinkLabels ??= preg_split(
 			'/\s+/',
-			$this->messageLocalizer->msg( 'cite_references_link_many_format_backlink_labels' )
+			$this->messageLocalizer->msg('cite_references_link_many_format_backlink_labels')
 				->plain()
 		);
 
-		return $this->backlinkLabels[$offset]
-			?? $this->errorReporter->plain( $parser, 'cite_error_references_no_backlink_label' );
+		return $this->backlinkLabels[$offset] ?? $this->errorReporter->plain($parser, 'cite_error_references_no_backlink_label');
 	}
 
 	/**
@@ -291,16 +280,15 @@ class ReferencesFormatter {
 	 *
 	 * @return string
 	 */
-	private function listToText( array $arr ): string {
-		$lastElement = array_pop( $arr );
+	private function listToText(array $arr): string {
+		$lastElement = array_pop($arr);
 
-		if ( $arr === [] ) {
-			return (string)$lastElement;
+		if ($arr === []) {
+			return (string) $lastElement;
 		}
 
-		$sep = $this->messageLocalizer->msg( 'cite_references_link_many_sep' )->plain();
-		$and = $this->messageLocalizer->msg( 'cite_references_link_many_and' )->plain();
-		return implode( $sep, $arr ) . $and . $lastElement;
+		$sep = $this->messageLocalizer->msg('cite_references_link_many_sep')->plain();
+		$and = $this->messageLocalizer->msg('cite_references_link_many_and')->plain();
+		return implode($sep, $arr) . $and . $lastElement;
 	}
-
 }

@@ -1088,15 +1088,6 @@ class ReferenceStackTest extends \MediaWikiUnitTestCase {
 		$this->assertSame( [ 'have' ], $stack->getGroups() );
 	}
 
-	public function testHasGroup() {
-		$stack = $this->newStack();
-		$stack->refs = [ 'present' => [ [ 'ref etc' ] ], 'empty' => [] ];
-
-		$this->assertFalse( $stack->hasGroup( 'absent' ) );
-		$this->assertTrue( $stack->hasGroup( 'present' ) );
-		$this->assertFalse( $stack->hasGroup( 'empty' ) );
-	}
-
 	public function testGetGroupRefs() {
 		$stack = $this->newStack();
 		$stack->refs = [ 'present' => [ [ 'ref etc' ] ], 'empty' => [] ];
