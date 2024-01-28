@@ -39,8 +39,8 @@ class ErrorReporter {
 	 */
 	public function halfParsed( Parser $parser, string $key, ...$params ): string {
 		$msg = $this->msg( $parser, $key, ...$params );
-		$wikitext = $parser->recursiveTagParse( $msg->plain() );
-		return $this->wrapInHtmlContainer( $wikitext, $key, $msg->getLanguage() );
+		$halfParsed = $parser->recursiveTagParse($msg->plain());
+		return $this->wrapInHtmlContainer($halfParsed, $key, $msg->getLanguage());
 	}
 
 	/**
