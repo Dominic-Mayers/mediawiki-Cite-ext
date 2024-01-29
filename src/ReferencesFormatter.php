@@ -85,9 +85,20 @@ class ReferencesFormatter {
 		array $groupRefs,
 		bool $isSectionPreview
 	): string {
+		// After sorting the list, we can assume that references are in the same order as their
+		// numbering.  Subreferences will come immediately after their parent.
+		uasort(
+			$groupRefs,
+			static function (ReferenceStackItem $a, ReferenceStackItem $b): int {
+				$cmp = ( $a->number ?? 0 ) - ( $b->number ?? 0 );
+				return $cmp ?: ( $a->extendsIndex ?? 0 ) - ( $b->extendsIndex ?? 0 );
+			}
+		);
 		// Add new lines between the list items (ref entries) to avoid confusing tidy (T15073).
 		// Note: This builds a string of wikitext, not html.
 		$parserInput = "\n";
+		/** @var string|bool $indented */
+		$indented = false;
 		foreach ($groupRefs as $grKey => &$ref) {
 			$extends = & $ref->extends;
 			if (!$indented && isset($extends)) {
