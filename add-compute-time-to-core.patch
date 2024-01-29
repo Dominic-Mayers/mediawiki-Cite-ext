@@ -1,0 +1,100 @@
+commit 2c45b6467507868558b3eec1c22ac7a262b052eb
+Author: Dominic Mayers <dominic.mayers@meditationstudies.org>
+Date:   Mon Jan 29 14:10:02 2024 -0500
+
+    Add compute time for refs and references
+
+diff --git a/includes/parser/Parser.php b/includes/parser/Parser.php
+index 4952a38bd77..c175b7408c1 100644
+--- a/includes/parser/Parser.php
++++ b/includes/parser/Parser.php
+@@ -265,6 +265,33 @@ class Parser {
+ 	# Temporary
+ 	# These are variables reset at least once per parse regardless of $clearState
+ 
++	/**
++	 * To compare efficiency between versions of Cite extension.
++	 * Make sure it is properly incremented in the relevant parts
++	 * of the extension and not elsewhere.
++	 */
++	public int $refTime = 0;
++
++	/**
++	 * To compare efficiency between versions of Cite extension.
++	 * Make sure it is properly incremented in the relevant parts
++	 * of the extension and not elsewhere.
++	 */
++	public int $referencesTime = 0;
++
++	/**
++	 * To compare efficiency between versions of Cite extension.
++	 * Make sure it is properly incremented in the relevant parts
++	 * and not elsewhere.
++	 */
++	private int $unstripTime = 0;
++
++	/**
++	 * True when we must count time (see $refTime, $referencesTime
++	 * and $unstripTime).
++	 */
++	public ?bool $compTime = null;
++
+ 	/**
+ 	 * @var ParserOptions|null
+ 	 * @deprecated since 1.35, use Parser::getOptions()
+@@ -652,10 +679,14 @@ class Parser {
+ 			$this->mRevisionSize = null;
+ 		}
+ 
++		$this->compTime = (strpos($text, "--Compute Time--") === 2);
++		if ($this->compTime)
++			$this->refTime = $this->referencesTime = 0;
++
+ 		$text = $this->internalParse( $text );
+ 		$this->hookRunner->onParserAfterParse( $this, $text, $this->mStripState );
+ 
+-		$text = $this->internalParseHalfParsed( $text, true, $linestart );
++		$text = $this->internalParseHalfParsed($text, true, $linestart);
+ 
+ 		/**
+ 		 * A converted title will be provided in the output object if title and
+@@ -708,6 +739,22 @@ class Parser {
+ 			$this->mOutput->addWrapperDivClass( $class );
+ 		}
+ 
++		if ($this->compTime) {
++			$this->mOutput->setLimitReportData(
++				'cite-extension-ref-time',
++				$this->refTime / 1e+9
++			);
++			$this->mOutput->setLimitReportData(
++				'cite-extension-references-time',
++				$this->referencesTime / 1e+9
++			);
++			$this->mOutput->setLimitReportData(
++				'cite-extension-total-time',
++				$this->referencesTime / 1e+9 + $this->refTime / 1e+9
++			);
++			$this->compTime = false;
++		}
++
+ 		$this->mOutput->setText( $text );
+ 
+ 		$this->mRevisionId = $oldRevisionId;
+diff --git a/languages/i18n/en.json b/languages/i18n/en.json
+index bad6cd15a3e..bfecb89bcb0 100644
+--- a/languages/i18n/en.json
++++ b/languages/i18n/en.json
+@@ -4245,6 +4245,12 @@
+ 	"duration-millennia": "$1 {{PLURAL:$1|millennium|millennia}}",
+ 	"rotate-comment": "Image rotated by $1 {{PLURAL:$1|degree|degrees}} clockwise",
+ 	"limitreport-title": "Parser profiling data:",
++	"cite-extension-ref-time" : "Time to manage refs in Cite extension",
++	"cite-extension-ref-time-value" : "$1 s",
++	"cite-extension-references-time" : "Time to manage references in Cite extension",
++	"cite-extension-references-time-value" : "$1 s",
++	"cite-extension-total-time" : "Total time for Cite extension",
++	"cite-extension-total-time-value" : "$1 s",
+ 	"limitreport-cputime": "CPU time usage",
+ 	"limitreport-cputime-value": "$1 {{PLURAL:$1|second|seconds}}",
+ 	"limitreport-walltime": "Real time usage",

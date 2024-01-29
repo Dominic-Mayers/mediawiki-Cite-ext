@@ -101,8 +101,11 @@ class Cite {
 	 * @return string|null Null in case a <ref> tag is not allowed in the current context
 	 */
 	public function ref(Parser $parser, ?string $text, PPFrame $frame, array $argv): ?string {
-
+		if ($parser->compTime && $this->depthRef == 0 && $this->inReferencesGroup === null)
+			$parser->refTime -= hrtime(true);
 		$ret = $this->guardedRef($parser, $text, $frame, $argv);
+		if ($parser->compTime && $this->depthRef == 0 && $this->inReferencesGroup === null)
+			$parser->refTime += hrtime(true);
 
 		return $ret;
 	}
@@ -225,7 +228,8 @@ class Cite {
 	 * @return string|null Null in case a <references> tag is not allowed in the current context
 	 */
 	public function references(Parser $parser, ?string $text, PPFrame $frame, array $argv): ?string {
-
+                if ($parser->compTime)
+			$parser->referencesTime -= hrtime(true);
 		$status = $this->parseArguments($argv, ['group', 'responsive']);
 		$arguments = $status->getValue();
 
@@ -255,6 +259,8 @@ class Cite {
 		$ret = $this->formatReferences($parser, $this->inReferencesGroup, $responsive);
 		$this->inReferencesGroup = null;
 
+		if ($parser->compTime)
+			$parser->referencesTime += hrtime(true);
 		return $ret;
 	}
 
@@ -269,8 +275,9 @@ class Cite {
 		if ($text === null || trim($text) === '') {
 			return StatusValue::newGood();
 		}
-		// Parse the <references> content to process any unparsed <ref> tags, but drop the resulting
-		// HTML
+		// Parse the <references> content to process any unparsed <ref> tags, but drop the resulting HTML
+		// The time to compute this is not counted twice because gardedRef()
+		// excludes the calls with $inReferencesGroup not null from its time.
 		$ptext = $parser->recursiveTagParse($text, $frame);
 
 		return StatusValue::newGood();
